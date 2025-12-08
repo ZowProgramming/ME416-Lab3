@@ -2,6 +2,7 @@
 
 %% Generate Simple Dubins Path
 
+% Compares two dubins path and returns the shorter one
 function [shorterX, shorterY] = compareDubinsPaths(fullX1, fullY1, fullX2, fullY2)
 
     % Calculate length of first path
@@ -23,8 +24,14 @@ function [shorterX, shorterY] = compareDubinsPaths(fullX1, fullY1, fullX2, fullY
     end
 end
 
+% creates dubins path
 function [fullX, fullY] = dubinsPathToPosition(start, goalPos, Rmin)
-    n = 37;
+
+    % Inputs:
+    %   start = [x,y, theta] of starting position
+    %   goalPos = [x,y] of ending position
+
+    n = 37; % number of angles checked;
     for k = linspace(0,360,n)
         goal = [goalPos, deg2rad(k)];
 
@@ -54,14 +61,15 @@ function [fullX, fullY] = dubinsPathToPosition(start, goalPos, Rmin)
     end
 end
 
-
 %% Helper functions
+
+% returns a random value between a and b
 function x = rand_val(a,b)
     x = a + (b-a)*rand;
 end
 
-function d = dist(x1, y1, x2, y2)
 % pointDistance  Compute Euclidean distance between (x1,y1) and (x2,y2)
+function d = dist(x1, y1, x2, y2)
     d = sqrt( (x2 - x1)^2 + (y2 - y1)^2 );
 end
 
@@ -83,7 +91,9 @@ function [xn, yn, thetan] = dubins_step(x, y, theta, omega, v, dt)
     thetan  = theta + omega*dt;
 end
 
-function [xn, yn, thetan] = move_dumb_limo(x,y,theta,Rmin,Vmax, dt)
+
+function [xn, yn, thetan] = move_dumb_limo_sim(x,y,theta,Rmin,Vmax, dt)
+    % controls limos to move randomly
     v = rand_val(0,Vmax);
     omega = rand_val(-v/Rmin, v/Rmin);
 
@@ -92,14 +102,14 @@ function [xn, yn, thetan] = move_dumb_limo(x,y,theta,Rmin,Vmax, dt)
     thetan  = theta + omega*dt;
 end
 
-function [v, omega] = bot_step(limoX, limoY, limoTheta, targetX, targetY, Vmax, Rmin, atGoal)
+function [v, omega] = bot_step_sim(limoX, limoY, limoTheta, targetX, targetY, Vmax, Rmin, atGoal)
 
-    % SENDLIMOSTEP Sends a single velocity command to move LIMO toward target
+    % bot_step_sim returns the v and omega the bot requires to move towards
+    % target point
     %
     % Inputs:
     %   limoX, limoY, limoTheta - current LIMO pose
     %   targetX, targetY        - target position
-    %   tcpObj                  - existing tcpclient object
     
     %% ----------------- CONFIG (based on physical parameters of LIMO and default values that we found were effective) -----------------
     omegaMax = Vmax/Rmin;    % max angular velocity (rad/s)
@@ -114,7 +124,7 @@ function [v, omega] = bot_step(limoX, limoY, limoTheta, targetX, targetY, Vmax, 
     desiredTheta = atan2(dy, dx);
     angleError = wrapToPi(desiredTheta - limoTheta);
     
-    %% ----------------- CHECK TOLERANCE -----------------
+    %% ----------------- CHECK IF AT GOAL -----------------
     if atGoal
         v = 0;
         omega = 0;
@@ -187,19 +197,27 @@ function flag = segmentsIntersect(x1,y1,x2,y2,x3,y3,x4,y4)
     flag = (t >= 0 && t <= 1 && u >= 0 && u <= 1);
 end
 
-%% PARAMETER DEFININITIONS
+%% PARAMETER DEFININITIONS (CONFIG)
 
 start = [10, 7, 0];  % Define start: [x, y, theta] where theta is in radians
 goal = [-8, -8]; % Define goal: [x, y]
 Rmin = 2; % Minimum turning radius
 Vmax = 2; % Maximum velocity
 commandInterval = 0.1; % Time per command
-targetPointNum = 1;
+
+
+limos = 12; % number of other limos
+
+lookOutDist = 5; % how many checkpoints ahead the limo looks to see if anything is in it's path
+tol = 0.5; % how close to point to be considered 'at' the point
+recalDist = 5; % how far from goal point to recalibrate path
+
+
+%% INITIALIZE PLOT
 
 % Compute path
 [fullX, fullY] = dubinsPathToPosition(start, goal, Rmin);
 
-%% INITIALIZE PLOT
 figure;
 
 plot(fullX, fullY, 'bo-', 'LineWidth', 2); %plotting the dubins path
@@ -209,21 +227,18 @@ plot(goal(1), goal(2), 'ro', 'MarkerSize', 10, 'MarkerFaceColor', 'r'); % plot e
 axis equal;
 grid on;
 
-% Initalize rectangle to represent Limo
+% Initalize rectangle to represent Limos; L = limo length, W = limo width
 L = 2; W = 1;
 limoX = [-L/2, L/2, L/2, -L/2];
 limoY = [-W/2, -W/2, W/2,  W/2];
 
-
+% Initialize our 'bot' which is the LIMO we control
 hBot = patch(limoX + start(1), limoY + start(2), 'blue','DisplayName','LIMO');
-hArrow = quiver(0,0,0,0,'LineWidth',2,'Color','r','MaxHeadSize',2, 'DisplayName','Direction');
 
-% Initialize rectangles representing other Limo's
 
+%% INITIALIZE ALL OTHER LIMOS
 % Pre allocate structure
 limo = struct;
-
-limos = 12; % number of other limos
 
 for i = 1:limos
     % start the limos at some random position
@@ -252,15 +267,20 @@ for i = 1:limos
     limo.(sprintf('arrow_%d_b', i)) = hArrowB;
 end
 
+% Choose Graph Size (change to fit to match RASTIC's mocap area)
 xlim([-20 20]);
 ylim([-20 20]);
 
 %% REAL-TIME PLOT UPDATING FOR SIMULATION (MAIN LOOP)
-atGoal = 0;
-intersection = 0;
-lookOutDist = 5;
+
+% Pre-loop initializations
+atGoal = 0; % atGoal is 0 if bot not at goal, 1 if it is
+intersection = 0; % initialize boolean checking fi there is a limo in the immediate path
+targetPointNum = 1; % initalize which poin the Limo is trying to go
+
 while ~atGoal
 
+    % get bot current position (SIMULATION)
     xs_bot = get(hBot, 'XData');
     ys_bot = get(hBot, 'YData');
 
@@ -273,11 +293,9 @@ while ~atGoal
     ct_bot = atan2(dy_bot, dx_bot);
 
    
-    % Choose Target Point
-    tol = 0.5; % how close to point to be considered 'at' the point
+    % Choose Target Point based on position and check if path recalibration
+    % needed
 
-    recalDist = 5; % how far from goal point to recalibrate path
-    
     targetX = fullX(targetPointNum);
     targetY = fullY(targetPointNum);
     if dist(cx_bot, cy_bot, targetX, targetY) < tol
@@ -291,6 +309,7 @@ while ~atGoal
     if dist(cx_bot, cy_bot, targetX, targetY) > recalDist
         currentPos = [cx_bot, cy_bot, ct_bot];
         [fullX, fullY] = dubinsPathToPosition(currentPos, goal, Rmin);
+        targetPointNum = 1;
     end
 
 
@@ -304,10 +323,11 @@ while ~atGoal
     plot(fullX, fullY, 'bo-', 'LineWidth', 2); %plotting the dubins path
     plot(lookOutX, lookOutY, 'ro-', 'LineWidth', 2); %plotting the dubins path
     
+    % WAIT IF THERE IS INTERSECTION
     if intersection
         v_bot = 0; omega_bot = 0;
     else
-        [v_bot, omega_bot] = bot_step(cx_bot, cy_bot, ct_bot, targetX, targetY, Rmin, Vmax, 0);
+        [v_bot, omega_bot] = bot_step_sim(cx_bot, cy_bot, ct_bot, targetX, targetY, Rmin, Vmax, 0);
     end
 
     [newX_bot, newY_bot, newTheta_bot] = dubins_step(cx_bot, cy_bot, ct_bot, omega_bot, v_bot, commandInterval);
@@ -315,6 +335,8 @@ while ~atGoal
     R = [cos(newTheta_bot) -sin(newTheta_bot); sin(newTheta_bot) cos(newTheta_bot)];
     rotated_bot = R * [limoX; limoY];
 
+    % Updates the position of the robot in simulation (SIMULATION ONLY,
+    % REMOVE FOR ACTUAL)
     set(hBot, 'XData', rotated_bot(1,:) + newX_bot, ...
                  'YData', rotated_bot(2,:) + newY_bot);
 
@@ -327,6 +349,8 @@ while ~atGoal
         xs = get(limoID, 'XData');
         ys = get(limoID, 'YData');
         
+        % GET CURRENT POSITION OF OTHER LIMOS IN SIMULATION (REMOVE FOR
+        % ACTUAL)
         currentX = mean(xs);
         currentY = mean(ys);
 
@@ -335,11 +359,11 @@ while ~atGoal
      
         currentTheta = atan2(dy, dx);
 
-        [newX, newY, newTheta] = move_dumb_limo(currentX, currentY, currentTheta, Rmin, Vmax, commandInterval);;
+        [newX, newY, newTheta] = move_dumb_limo_sim(currentX, currentY, currentTheta, Rmin, Vmax, commandInterval);;
 
         R = [cos(newTheta) -sin(newTheta); sin(newTheta) cos(newTheta)];
         rotated = R * [limoX; limoY];
-
+        
         set(limoID, 'XData', rotated(1,:) + newX, ...
                      'YData', rotated(2,:) + newY);
 
@@ -377,14 +401,14 @@ while ~atGoal
                     'UData', arrow_dx, ...
                     'VData', arrow_dy);
 
-       % disp("X: " + currentX + " Y: " + currentY + " theta: " + currentTheta);
-
        %check for intersection
-       if quiverIntersectsLine(arrowID, lookOutX, lookOutY)
+       if quiverIntersectsLine(arrowID_a, lookOutX, lookOutY) || quiverIntersectsLine(arrowID_b, lookOutX, lookOutY)
            intersection = 1;
-           set(arrowID, 'Color', 'r');
+           set(arrowID_a, 'Color', 'r');
+           set(arrowID_b, 'Color', 'r');
        else
-           set(arrowID, 'Color', 'g'); % Reset color if no intersection
+           set(arrowID_a, 'Color', 'g'); % Reset color if no intersection
+           set(arrowID_b, 'Color', 'g'); % Reset color if no intersection
        end
     end
     
