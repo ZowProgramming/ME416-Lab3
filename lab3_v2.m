@@ -240,13 +240,16 @@ for i = 1:limos
     % Draw square and store handle
     h = fill(rotated(1,:), rotated(2,:), 'y');
     
-    hArrow = quiver(0,0,0,0,'LineWidth',2,'Color','g','MaxHeadSize',0.5, 'DisplayName','Direction');
+    hArrowA = quiver(0,0,0,0,'LineWidth',2,'Color','g','MaxHeadSize',0.5, 'DisplayName','Direction');
+    hArrowB = quiver(0,0,0,0,'LineWidth',2,'Color','g','MaxHeadSize',0.5, 'DisplayName','Direction');
     set(h, 'DisplayName', sprintf('limo_%d', i));
-    set(hArrow, 'DisplayName', sprintf('arrow_%d', i));
+    set(hArrowA, 'DisplayName', sprintf('arrow_%d_a', i));
+    set(hArrowB, 'DisplayName', sprintf('arrow_%d_b', i));
 
     % Store handle with dynamic field name
     limo.(sprintf('limo_%d', i)) = h;
-    limo.(sprintf('arrow_%d', i)) = hArrow;
+    limo.(sprintf('arrow_%d_a', i)) = hArrowA;
+    limo.(sprintf('arrow_%d_b', i)) = hArrowB;
 end
 
 xlim([-20 20]);
@@ -319,7 +322,8 @@ while ~atGoal
     intersection = 0;
     for j = 1:limos
         limoID = limo.(sprintf('limo_%d', j));
-        arrowID = limo.(sprintf('arrow_%d', j));
+        arrowID_a = limo.(sprintf('arrow_%d_a', j));
+        arrowID_b = limo.(sprintf('arrow_%d_b', j));
         xs = get(limoID, 'XData');
         ys = get(limoID, 'YData');
         
@@ -340,14 +344,19 @@ while ~atGoal
                      'YData', rotated(2,:) + newY);
 
         % Compute back edge midpoint in local rectangle coordinates
-        backMid_local = [-L/2; 0];  % x = -L/2 is back edge, y = 0 is center of edge
+        bottomLeft_local = [-L/2; -W/2];  % x = -L/2 is back edge, y = 0 is center of edge
+        bottomRight_local = [-L/2; W/2];
         
         % Rotate back edge midpoint according to newTheta
-        backMid_world = R * backMid_local;
+        bottomLeft_world = R * bottomLeft_local;
+        bottomRight_world = R * bottomRight_local;
         
         % Translate to new rectangle position
-        backX = backMid_world(1) + newX;
-        backY = backMid_world(2) + newY;
+        backX_a = bottomLeft_world(1) + newX;
+        backY_a = bottomLeft_world(2) + newY;
+
+        backX_b = bottomRight_world(1) + newX;
+        backY_b = bottomRight_world(2) + newY;
 
 
         % Arrow length (tweak as needed)
@@ -358,8 +367,13 @@ while ~atGoal
         arrow_dy = arrowLength * sin(newTheta);
         
         % Update arrow position and direction
-        set(arrowID, 'XData', backX, ...
-                    'YData', backY, ...
+        set(arrowID_a, 'XData', backX_a, ...
+                    'YData', backY_a, ...
+                    'UData', arrow_dx, ...
+                    'VData', arrow_dy);
+
+        set(arrowID_b, 'XData', backX_b, ...
+                    'YData', backY_b, ...
                     'UData', arrow_dx, ...
                     'VData', arrow_dy);
 
