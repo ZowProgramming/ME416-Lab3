@@ -89,8 +89,8 @@ end
 
 %% PARAMETER DEFININITIONS
 
-start = [-8, -8, 0];  % Define start: [x, y, theta] where theta is in radians
-goal = [10, 7]; % Define goal: [x, y]
+start = [0, 0, pi/4];  % Define start: [x, y, theta] where theta is in radians
+goal = [-5, -5]; % Define goal: [x, y]
 Rmin = 2; % Minimum turning radius
 Vmax = 2; % Maximum velocity
 commandInterval = 0.1; % Time per command
@@ -110,14 +110,14 @@ grid on;
 
 % Initalize rectangle to represent Limo
 L = 2; W = 1;
-limoX = [-L/2, L/2, L/2, -L/2];
-limoY = [-W/2, -W/2, W/2,  W/2];
-
-
-hBot = patch(limoX + start(1), limoY + start(2), 'blue','DisplayName','LIMO');
+squareX = [-L/2, L/2, L/2, -L/2];
+squareY = [-W/2, -W/2, W/2,  W/2];
+hSquare = patch(squareX, squareY, 'blue','DisplayName','LIMO');
 hArrow = quiver(0,0,0,0,'LineWidth',2,'Color','r','MaxHeadSize',2, 'DisplayName','Direction');
 
 % Initialize rectangles representing other Limo's
+figure; hold on; axis equal
+title('Limo squares')
 
 % Pre allocate structure
 limo = struct;
@@ -128,25 +128,23 @@ for i = 1:limos
     % start the limos at some random position
     limo_startX = randi([-8 8]);
     limo_startY = randi([-8 8]);
-    limo_startTheta = randi([0 360]);
+    limo_startTheta = rabdu
 
-    % limoX = [-L/2, L/2, L/2, -L/2];
-    % limoY = [-W/2, -W/2, W/2,  W/2];
+    limoX = [-L/2, L/2, L/2, -L/2] + limo_startX;
+    limoY = [-W/2, -W/2, W/2,  W/2] + limo_startY;
 
-    R = [cos(limo_startTheta) -sin(limo_startTheta); sin(limo_startTheta) cos(limo_startTheta)];
-    rotated = R * [limoX  + limo_startX; limoY + limo_startY];
+    R = [cos(newTheta) -sin(newTheta); sin(newTheta) cos(newTheta)];
+    rotated = R * [limoX; limoY];
 
     % Draw square and store handle
-    h = fill(rotated(1,:), rotated(2,:), 'y');
-    hArrow = quiver(0,0,0,0,'LineWidth',2,'Color','r','MaxHeadSize',0.5, 'DisplayName','Direction');
+    h = fill(limoX, limoY, 'r');  
     set(h, 'DisplayName', sprintf('limo_%d', i));
-    set(hArrow, 'DisplayName', sprintf('arrow_%d', i));
 
     % Store handle with dynamic field name
     limo.(sprintf('limo_%d', i)) = h;
-    limo.(sprintf('arrow_%d', i)) = hArrow;
 end
 
+hold off
 
 
 
@@ -161,7 +159,6 @@ for i = 1:1000
     % Update the position of each limo
     for j = 1:limos
         limoID = limo.(sprintf('limo_%d', j));
-        arrowID = limo.(sprintf('arrow_%d', j));
         xs = get(limoID, 'XData');
         ys = get(limoID, 'YData');
         
@@ -176,27 +173,13 @@ for i = 1:1000
         [newX, newY, newTheta] = move_dumb_limo(currentX, currentY, currentTheta, Rmin, Vmax, commandInterval);;
 
         R = [cos(newTheta) -sin(newTheta); sin(newTheta) cos(newTheta)];
-        rotated = R * [limoX; limoY];
+        rotated = R * [squareX; squareY];
 
         set(limoID, 'XData', rotated(1,:) + newX, ...
                      'YData', rotated(2,:) + newY);
 
-        % Arrow length (tweak as needed)
-        arrowLength = 10;  
-        
-        % Arrow direction in world coordinates
-        arrow_dx = arrowLength * cos(newTheta);
-        arrow_dy = arrowLength * sin(newTheta);
-        
-        % Update arrow position and direction
-        set(arrowID, 'XData', newX, ...
-                    'YData', newY, ...
-                    'UData', arrow_dx, ...
-                    'VData', arrow_dy);
-
-       % disp("X: " + currentX + " Y: " + currentY + " theta: " + currentTheta);
+        disp("X: " + currentX + " Y: " + currentY + " theta: " + currentTheta);
 
     end
-
     pause(commandInterval);
 end
