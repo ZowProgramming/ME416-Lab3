@@ -130,11 +130,67 @@ function [v, omega] = bot_step(limoX, limoY, limoTheta, targetX, targetY, Vmax, 
 end
 
 %% COLLISION AVOIDANCE
+function intersects = quiverIntersectsLine(hQuiver, lineX, lineY)
+% quiverIntersectsLine  Check if a quiver intersects a piecewise line
+%
+% Inputs:
+%   hQuiver - handle to quiver object
+%   lineX   - vector of x coordinates of piecewise line
+%   lineY   - vector of y coordinates of piecewise line
+%
+% Output:
+%   intersects - true if the quiver intersects any segment of the line
+
+    % Get quiver data
+    x0 = hQuiver.XData;
+    y0 = hQuiver.YData;
+    u  = hQuiver.UData;
+    v  = hQuiver.VData;
+
+    % Quiver endpoint
+    x1 = x0 + u;
+    y1 = y0 + v;
+
+    intersects = false;
+
+    % Check each segment of the piecewise line
+    for i = 1:length(lineX)-1
+        % segment endpoints
+        x2 = lineX(i);
+        y2 = lineY(i);
+        x3 = lineX(i+1);
+        y3 = lineY(i+1);
+
+        if segmentsIntersect(x0,y0,x1,y1,x2,y2,x3,y3)
+            intersects = true;
+            return
+        end
+    end
+end
+
+% -----------------------
+function flag = segmentsIntersect(x1,y1,x2,y2,x3,y3,x4,y4)
+% Check if line segment (x1,y1)-(x2,y2) intersects (x3,y3)-(x4,y4)
+    
+    % Compute denominators
+    den = (x1-x2)*(y3-y4) - (y1-y2)*(x3-x4);
+    if den == 0
+        flag = false; % parallel
+        return
+    end
+
+    % Compute intersection point t and u
+    t = ((x1-x3)*(y3-y4) - (y1-y3)*(x3-x4)) / den;
+    u = -((x1-x2)*(y1-y3) - (y1-y2)*(x1-x3)) / den;
+
+    % Check if intersection is within both segments
+    flag = (t >= 0 && t <= 1 && u >= 0 && u <= 1);
+end
 
 %% PARAMETER DEFININITIONS
 
-start = [-8, -8, 0];  % Define start: [x, y, theta] where theta is in radians
-goal = [10, 7]; % Define goal: [x, y]
+start = [10, 7, 0];  % Define start: [x, y, theta] where theta is in radians
+goal = [-8, -8]; % Define goal: [x, y]
 Rmin = 2; % Minimum turning radius
 Vmax = 2; % Maximum velocity
 commandInterval = 0.1; % Time per command
@@ -183,7 +239,8 @@ for i = 1:limos
 
     % Draw square and store handle
     h = fill(rotated(1,:), rotated(2,:), 'y');
-    hArrow = quiver(0,0,0,0,'LineWidth',2,'Color','r','MaxHeadSize',0.5, 'DisplayName','Direction');
+    
+    hArrow = quiver(0,0,0,0,'LineWidth',2,'Color','g','MaxHeadSize',0.5, 'DisplayName','Direction');
     set(h, 'DisplayName', sprintf('limo_%d', i));
     set(hArrow, 'DisplayName', sprintf('arrow_%d', i));
 
@@ -192,20 +249,74 @@ for i = 1:limos
     limo.(sprintf('arrow_%d', i)) = hArrow;
 end
 
+xlim([-20 20]);
+ylim([-20 20]);
 
-
-
-
-xlim([-10 10]);
-ylim([-10 10]);
-
-
-%% REAL-TIME PLOT UPDATING FOR SIMULATION
+%% REAL-TIME PLOT UPDATING FOR SIMULATION (MAIN LOOP)
 atGoal = 0;
-lookOutDist = 10;
+intersection = 0;
+lookOutDist = 5;
 while ~atGoal
 
+    xs_bot = get(hBot, 'XData');
+    ys_bot = get(hBot, 'YData');
+
+    cx_bot = mean(xs_bot);
+    cy_bot = mean(ys_bot);
+
+    dx_bot = xs_bot(2) - xs_bot(1);
+    dy_bot = ys_bot(2) - ys_bot(1);
+ 
+    ct_bot = atan2(dy_bot, dx_bot);
+
+   
+    % Choose Target Point
+    tol = 0.5; % how close to point to be considered 'at' the point
+
+    recalDist = 5; % how far from goal point to recalibrate path
+    
+    targetX = fullX(targetPointNum);
+    targetY = fullY(targetPointNum);
+    if dist(cx_bot, cy_bot, targetX, targetY) < tol
+        targetPointNum = targetPointNum + 1;
+    end
+    if(targetPointNum >= length(fullX))
+        atGoal = 1;
+        targetPointNum = targetPointNum - 1;
+    end
+    % recalibrate path
+    if dist(cx_bot, cy_bot, targetX, targetY) > recalDist
+        currentPos = [cx_bot, cy_bot, ct_bot];
+        [fullX, fullY] = dubinsPathToPosition(currentPos, goal, Rmin);
+    end
+
+
+    if(targetPointNum + lookOutDist >= length(fullX))
+        lookOutX = fullX(targetPointNum: end);
+        lookOutY = fullY(targetPointNum: end);
+    else
+        lookOutX = fullX(targetPointNum:targetPointNum + lookOutDist);
+        lookOutY = fullY(targetPointNum:targetPointNum + lookOutDist);
+    end
+    plot(fullX, fullY, 'bo-', 'LineWidth', 2); %plotting the dubins path
+    plot(lookOutX, lookOutY, 'ro-', 'LineWidth', 2); %plotting the dubins path
+    
+    if intersection
+        v_bot = 0; omega_bot = 0;
+    else
+        [v_bot, omega_bot] = bot_step(cx_bot, cy_bot, ct_bot, targetX, targetY, Rmin, Vmax, 0);
+    end
+
+    [newX_bot, newY_bot, newTheta_bot] = dubins_step(cx_bot, cy_bot, ct_bot, omega_bot, v_bot, commandInterval);
+
+    R = [cos(newTheta_bot) -sin(newTheta_bot); sin(newTheta_bot) cos(newTheta_bot)];
+    rotated_bot = R * [limoX; limoY];
+
+    set(hBot, 'XData', rotated_bot(1,:) + newX_bot, ...
+                 'YData', rotated_bot(2,:) + newY_bot);
+
     % Update the position of each dumb limo
+    intersection = 0;
     for j = 1:limos
         limoID = limo.(sprintf('limo_%d', j));
         arrowID = limo.(sprintf('arrow_%d', j));
@@ -228,68 +339,41 @@ while ~atGoal
         set(limoID, 'XData', rotated(1,:) + newX, ...
                      'YData', rotated(2,:) + newY);
 
+        % Compute back edge midpoint in local rectangle coordinates
+        backMid_local = [-L/2; 0];  % x = -L/2 is back edge, y = 0 is center of edge
+        
+        % Rotate back edge midpoint according to newTheta
+        backMid_world = R * backMid_local;
+        
+        % Translate to new rectangle position
+        backX = backMid_world(1) + newX;
+        backY = backMid_world(2) + newY;
+
+
         % Arrow length (tweak as needed)
-        arrowLength = 10;  
+        arrowLength = 5;  
         
         % Arrow direction in world coordinates
         arrow_dx = arrowLength * cos(newTheta);
         arrow_dy = arrowLength * sin(newTheta);
         
         % Update arrow position and direction
-        set(arrowID, 'XData', newX, ...
-                    'YData', newY, ...
+        set(arrowID, 'XData', backX, ...
+                    'YData', backY, ...
                     'UData', arrow_dx, ...
                     'VData', arrow_dy);
 
        % disp("X: " + currentX + " Y: " + currentY + " theta: " + currentTheta);
 
+       %check for intersection
+       if quiverIntersectsLine(arrowID, lookOutX, lookOutY)
+           intersection = 1;
+           set(arrowID, 'Color', 'r');
+       else
+           set(arrowID, 'Color', 'g'); % Reset color if no intersection
+       end
     end
     
-    xs_bot = get(hBot, 'XData');
-    ys_bot = get(hBot, 'YData');
-
-    cx_bot = mean(xs_bot);
-    cy_bot = mean(ys_bot);
-
-    dx_bot = xs_bot(2) - xs_bot(1);
-    dy_bot = ys_bot(2) - ys_bot(1);
- 
-    ct_bot = atan2(dy_bot, dx_bot);
-
-   
-    % Choose Target Point
-    tol = 0.5;
-    
-    targetX = fullX(targetPointNum);
-    targetY = fullY(targetPointNum);
-    if dist(cx_bot, cy_bot, targetX, targetY) < tol
-        targetPointNum = targetPointNum + 1;
-    end
-    if(targetPointNum >= length(fullX))
-        atGoal = 1;
-        targetPointNum = targetPointNum - 1;
-    end
-    if(targetPointNum + 10 >= length(fullX))
-        lookOutX = fullX(targetPointNum: end);
-        lookOutY = fullY(targetPointNum: end);
-    else
-        lookOutX = fullX(targetPointNum:targetPointNum + 10);
-        lookOutY = fullY(targetPointNum:targetPointNum + 10);
-    end
-    plot(fullX, fullY, 'bo-', 'LineWidth', 2); %plotting the dubins path
-    plot(lookOutX, lookOutY, 'ro-', 'LineWidth', 2); %plotting the dubins path
-
-    [v_bot, omega_bot] = bot_step(cx_bot, cy_bot, ct_bot, targetX, targetY, Rmin, Vmax, 0);
-    
-    [newX_bot, newY_bot, newTheta_bot] = dubins_step(cx_bot, cy_bot, ct_bot, omega_bot, v_bot, commandInterval);
-
-
-    R = [cos(newTheta_bot) -sin(newTheta_bot); sin(newTheta_bot) cos(newTheta_bot)];
-    rotated_bot = R * [limoX; limoY];
-
-    set(hBot, 'XData', rotated_bot(1,:) + newX_bot, ...
-                 'YData', rotated_bot(2,:) + newY_bot);
-
     pause(commandInterval);
     legend('Dubins Path', 'Start', 'Goal');
 end
