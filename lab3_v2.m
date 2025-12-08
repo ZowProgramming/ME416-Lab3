@@ -54,12 +54,18 @@ function [fullX, fullY] = dubinsPathToPosition(start, goalPos, Rmin)
     end
 end
 
-%% Simulate LIMO movement
 
+%% Helper functions
 function x = rand_val(a,b)
     x = a + (b-a)*rand;
 end
 
+function d = dist(x1, y1, x2, y2)
+% pointDistance  Compute Euclidean distance between (x1,y1) and (x2,y2)
+    d = sqrt( (x2 - x1)^2 + (y2 - y1)^2 );
+end
+
+%% Simulate LIMO movement
 function [xn, yn, thetan] = dubins_step(x, y, theta, omega, v, dt)
 % dubins_step  Propagate a Dubins car one step forward
 %
@@ -86,6 +92,44 @@ function [xn, yn, thetan] = move_dumb_limo(x,y,theta,Rmin,Vmax, dt)
     thetan  = theta + omega*dt;
 end
 
+function [v, omega] = bot_step(limoX, limoY, limoTheta, targetX, targetY, Vmax, Rmin, atGoal)
+
+    % SENDLIMOSTEP Sends a single velocity command to move LIMO toward target
+    %
+    % Inputs:
+    %   limoX, limoY, limoTheta - current LIMO pose
+    %   targetX, targetY        - target position
+    %   tcpObj                  - existing tcpclient object
+    
+    %% ----------------- CONFIG (based on physical parameters of LIMO and default values that we found were effective) -----------------
+    omegaMax = Vmax/Rmin;    % max angular velocity (rad/s)
+    Kp_linear = 1.0;   % proportional gain for linear velocity
+    Kp_angular = 2.0;  % proportional gain for angular velocity
+    
+    %% ----------------- COMPUTE ERRORS -----------------
+    dx = targetX - limoX;
+    dy = targetY - limoY;
+    distance = sqrt(dx^2 + dy^2);
+    
+    desiredTheta = atan2(dy, dx);
+    angleError = wrapToPi(desiredTheta - limoTheta);
+    
+    %% ----------------- CHECK TOLERANCE -----------------
+    if atGoal
+        v = 0;
+        omega = 0;
+    else
+        % Proportional control
+        v = Kp_linear * distance;
+        omega = Kp_angular * angleError;
+        
+        % Limit velocities
+        v = max(min(v, Vmax), -Vmax);
+        omega = max(min(omega, omegaMax), -omegaMax);
+    end
+end
+
+%% COLLISION AVOIDANCE
 
 %% PARAMETER DEFININITIONS
 
@@ -94,6 +138,7 @@ goal = [10, 7]; % Define goal: [x, y]
 Rmin = 2; % Minimum turning radius
 Vmax = 2; % Maximum velocity
 commandInterval = 0.1; % Time per command
+targetPointNum = 1;
 
 % Compute path
 [fullX, fullY] = dubinsPathToPosition(start, goal, Rmin);
@@ -153,12 +198,14 @@ end
 
 xlim([-10 10]);
 ylim([-10 10]);
-legend('Dubins Path', 'Start', 'Goal');
 
-%% REAL-TIME PLOT UPDATING
 
-for i = 1:1000
-    % Update the position of each limo
+%% REAL-TIME PLOT UPDATING FOR SIMULATION
+atGoal = 0;
+lookOutDist = 10;
+while ~atGoal
+
+    % Update the position of each dumb limo
     for j = 1:limos
         limoID = limo.(sprintf('limo_%d', j));
         arrowID = limo.(sprintf('arrow_%d', j));
@@ -197,6 +244,54 @@ for i = 1:1000
        % disp("X: " + currentX + " Y: " + currentY + " theta: " + currentTheta);
 
     end
+    
+    xs_bot = get(hBot, 'XData');
+    ys_bot = get(hBot, 'YData');
+
+    cx_bot = mean(xs_bot);
+    cy_bot = mean(ys_bot);
+
+    dx_bot = xs_bot(2) - xs_bot(1);
+    dy_bot = ys_bot(2) - ys_bot(1);
+ 
+    ct_bot = atan2(dy_bot, dx_bot);
+
+   
+    % Choose Target Point
+    tol = 0.5;
+    
+    targetX = fullX(targetPointNum);
+    targetY = fullY(targetPointNum);
+    if dist(cx_bot, cy_bot, targetX, targetY) < tol
+        targetPointNum = targetPointNum + 1;
+    end
+    if(targetPointNum >= length(fullX))
+        atGoal = 1;
+        targetPointNum = targetPointNum - 1;
+    end
+    if(targetPointNum + 10 >= length(fullX))
+        lookOutX = fullX(targetPointNum: end);
+        lookOutY = fullY(targetPointNum: end);
+    else
+        lookOutX = fullX(targetPointNum:targetPointNum + 10);
+        lookOutY = fullY(targetPointNum:targetPointNum + 10);
+    end
+    plot(fullX, fullY, 'bo-', 'LineWidth', 2); %plotting the dubins path
+    plot(lookOutX, lookOutY, 'ro-', 'LineWidth', 2); %plotting the dubins path
+
+    [v_bot, omega_bot] = bot_step(cx_bot, cy_bot, ct_bot, targetX, targetY, Rmin, Vmax, 0);
+    
+    [newX_bot, newY_bot, newTheta_bot] = dubins_step(cx_bot, cy_bot, ct_bot, omega_bot, v_bot, commandInterval);
+
+
+    R = [cos(newTheta_bot) -sin(newTheta_bot); sin(newTheta_bot) cos(newTheta_bot)];
+    rotated_bot = R * [limoX; limoY];
+
+    set(hBot, 'XData', rotated_bot(1,:) + newX_bot, ...
+                 'YData', rotated_bot(2,:) + newY_bot);
 
     pause(commandInterval);
+    legend('Dubins Path', 'Start', 'Goal');
 end
+
+disp("PATH COMPLETE!")
