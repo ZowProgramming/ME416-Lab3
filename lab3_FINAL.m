@@ -208,11 +208,18 @@ function sendCmd(tcpipClient, v,w)
 end
 %% MQTT SETUP
 broker = "mqtt://rasticvm.lan"; 
-clientID = "Winnie";
+clientID = "YoAn_Bot";
 
 robotID = "#"; 
 topic = "rb/" + robotID;
 RobotPositions = containers.Map('KeyType', 'char', 'ValueType', 'any');
+
+botID = "limo809";
+botTopic = "rb/" + botID;
+
+cmdTopic = "cmd/" + botID;
+goalTopic = "goal/" + botID; 
+
 
 % Close previous client if it exists
 try 
@@ -232,6 +239,7 @@ end
 
 % Subscribe
 subscribe(mqttClient, topic); 
+% subscribe(mqttClient, goalTopic);
 fprintf("Subscribed to topic: %s\n", topic);
 
 %% TCP SETUP
@@ -249,13 +257,23 @@ else
 end
 
 
-%% PARAMETER DEFININITIONS (CONFIG)
+%% PARAMETER DEFININITIONS (CONFIG)=1]; % Define goal: [x, y]
 
-botID = "limo809";
-botTopic = "rb/" + botID;
+disp(read(mqttClient));
+subscribe(mqttClient, goalTopic, "Callback", @goalCallback);
+
+function goalCallback(topic, message)
+    if topic == goalTopic
+        data = jsondecode(message);
+        goal = data.goal;
+        assignin('base','goal',goal);
+    end
+end
 
 start = [0, 0, pi];  % Define start: [x, y, theta] where theta is in radians
-goal = [2, 3]; % Define goal: [x, y]
+
+goal = [-3, 2.5]; % Define goal: [x, y]
+
 Rmin = 1; % Minimum turning radius
 Vmax = 3; % Maximum velocity
 commandInterval = 0.1; % Time per command
@@ -267,6 +285,11 @@ lookOutDist = 2; % how many checkpoints ahead the limo looks to see if anything 
 tol = 0.1; % how close to point to be considered 'at' the point
 recalDist = 0.5; % how far from goal point to recalibrate path
 arrowLength = 0.75;
+
+% Read the latest message from the topic
+msg = read(mqttClient);
+
+
 
 
 
@@ -310,8 +333,8 @@ if ~isempty(msg)
             continue
         end
 
-        robotX = - pos.x;
-        robotY = pos.z;
+        robotX = pos.x;
+        robotY = - pos.z;
 
         qx = data.rot(1);
         qy = data.rot(2);
@@ -320,7 +343,7 @@ if ~isempty(msg)
         q = [qw, qx, qy, qz];
 
         ROT = quat2rotm(q);
-        robotTheta = pi - atan2(ROT(3,1), ROT(1,1));   % full -180° to +180° -> NOTE we cannot use roll-pitch-yaw because pitch is limited to 180° range
+        robotTheta = (atan2(ROT(3,1), ROT(1,1)));   % full -180° to +180° -> NOTE we cannot use roll-pitch-yaw because pitch is limited to 180° range
 
         % Store latest robot position
         RobotPositions(t) = pos;
@@ -381,14 +404,16 @@ hLookOut = plot(NaN, NaN, 'ro-', 'LineWidth', 2);  % lookout segment (updated be
 atGoal = 0; % atGoal is 0 if bot not at goal, 1 if it is
 intersection = 0; % initialize boolean checking fi there is a limo in the immediate path
 targetPointNum = 1; % initalize which poin the Limo is trying to go
+
+lookOutX = fullX(targetPointNum:targetPointNum + lookOutDist);
+lookOutY = fullY(targetPointNum:targetPointNum + lookOutDist);
             
 while ~atGoal
-    
-
-    % Update the position of each dumb limo
-    intersection = 0;
     % Read all new messages
     msg = read(mqttClient);
+    % Update the position of each dumb limo
+    intersection = 0;
+   
 
     if ~isempty(msg)
         for k = 1:height(msg)
@@ -424,8 +449,8 @@ while ~atGoal
                 continue
             end
 
-            robotX = - pos.x;
-            robotY = pos.z;
+            robotX = pos.x;
+            robotY = - pos.z;
 
             qx = data.rot(1);
             qy = data.rot(2);
@@ -434,14 +459,16 @@ while ~atGoal
             q = [qw, qx, qy, qz];
     
             ROT = quat2rotm(q);
-            robotTheta = pi - atan2(ROT(3,1), ROT(1,1));   % full -180° to +180° -> NOTE we cannot use roll-pitch-yaw because pitch is limited to 180° range
-
+            robotTheta = - atan2(ROT(3,1), ROT(1,1));   % full -180° to +180° -> NOTE we cannot use roll-pitch-yaw because pitch is limited to 180° range
+            
+            
             % Store latest robot position
             RobotPositions(t) = pos;
 
             % --- Update or create plot element ---
             if (t == botTopic)
                 % Update my bot's position (REQUIRES IMPLEMENTATION)
+                % disp("X: " + robotX + " Y: " + robotY + " Theta: " + rad2deg(robotTheta));
                 cx_bot = robotX;
                 cy_bot = robotY;
                 ct_bot = robotTheta;
@@ -455,6 +482,7 @@ while ~atGoal
             elseif isKey(robotPlots,t)
 
                 % ---- UPDATE EXISTING LIMO ----
+                name = extractAfter(t,"rb/");
             
                 handles = robotPlots(t);
                 hRect   = handles.rect;
@@ -505,6 +533,8 @@ while ~atGoal
                 % ---- CREATE NEW LIMO ----
             
                 % orientation for the initial drawing
+                name = extractAfter(t,"rb/");
+
                 R = [cos(robotTheta) -sin(robotTheta); sin(robotTheta) cos(robotTheta)];
                 rotated = R * [limoX; limoY];
             
@@ -545,8 +575,8 @@ while ~atGoal
     end
     
     if(targetPointNum + lookOutDist >= length(fullX))
-        lookOutX = fullX(targetPointNum - 1: end);
-        lookOutY = fullY(targetPointNum - 1: end);
+        lookOutX = fullX(targetPointNum: end);
+        lookOutY = fullY(targetPointNum: end);
     else
         lookOutX = fullX(targetPointNum:targetPointNum + lookOutDist);
         lookOutY = fullY(targetPointNum:targetPointNum + lookOutDist);
@@ -575,7 +605,7 @@ while ~atGoal
     R = [cos(newTheta_bot) -sin(newTheta_bot); sin(newTheta_bot) cos(newTheta_bot)];
     rotated_bot = R * [limoX; limoY];
 
-    drawnow limitrate;
+    drawnow;
     pause(commandInterval);
     
 end
